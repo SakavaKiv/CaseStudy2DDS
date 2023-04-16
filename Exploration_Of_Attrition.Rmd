@@ -1,0 +1,595 @@
+---
+title: "DDSAnalytics Exploration of Attrition"
+author: "Sakava Kiv"
+date: "2023-04-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## [Youtube presentation of this analysis](https://youtu.be/_tR1P1Qsw34)  
+
+## [Shiny App](https://skshiny2000.shinyapps.io/ExploringAttritionShinyApp/?_ga=2.55232047.588930094.1681545329-541463208.1681545329)
+
+DDSAnalytics is an analytics company that specializes in talent management solutions for Fortune 100 companies. Talent management is defined as the iterative process of developing and retaining employees. It may include workforce planning, employee training programs, identifying high-potential employees and reducing/preventing voluntary employee turnover (attrition). To gain a competitive edge over its competition, DDSAnalytics is planning to leverage data science for talent management. The executive leadership has identified predicting employee turnover as its first application of data science for talent management. Before the business green lights the project, they have tasked your data science team to conduct an analysis of existing employee data. The business is also interested in learning about any job role specific trends that may exist in the data set (e.g., “Data Scientists have the highest job satisfaction”). You can also provide any other interesting trends and observations from your analysis. The analysis should be backed up by robust experimentation and appropriate visualization. Experiments and analysis must be conducted in R. You will also be asked to build a model to predict attrition.  
+
+* We will analyze features for reasons behind Attrition of Employees.
+* We will Identify the top three factors that lead to employee attrition.
+* We will build a model to predict attrition.
+
+## Description about the data
+* Education 1 'Below College' 2 'College' 3 'Bachelor' 4 'Master' 5 'Doctor'
+
+* EnvironmentSatisfaction 1 'Low' 2 'Medium' 3 'High' 4 'Very High'
+
+* JobInvolvement 1 'Low' 2 'Medium' 3 'High' 4 'Very High'
+
+* JobSatisfaction 1 'Low' 2 'Medium' 3 'High' 4 'Very High'
+
+* PerformanceRating 1 'Low' 2 'Good' 3 'Excellent' 4 'Outstanding'
+
+* RelationshipSatisfaction 1 'Low' 2 'Medium' 3 'High' 4 'Very High'
+
+* WorkLifeBalance 1 'Bad' 2 'Good' 3 'Better' 4 'Best'
+
+## Get a feel for the data
+
+```{r echo = FALSE}
+library(tidyverse)
+library(tidyr)
+library(caret)
+library(class)
+library(e1071)
+library(aws.s3)
+
+#Initialize your amazon Key and secret key so you can access data in S3 
+
+Sys.setenv("AWS_ACCESS_KEY_ID" = "AKIA444VEAWLXDMNIMCF",
+           "AWS_SECRET_ACCESS_KEY" = "lyAyxhSackNLpvFYMz+rQui0+zUtID85DbprQ2P6",
+           "AWS_DEFAULT_REGION" = "us-east-2")
+
+#Using aws.s3
+bucketlist()
+get_bucket("ddsproject1")
+
+# read and write from object
+
+#read in CaseStudy-2data.csv
+case_study = s3read_using(FUN = read.csv,
+                          bucket = "ddsproject1",
+                          object = "CaseStudy2-data.csv")
+#get a feel for the data (explore)
+head(case_study)
+dim(case_study)
+
+#run a welch Two Sample t-test  on age (integer) vs attrition(chr)
+t.test(Age~Attrition, data = case_study)
+
+#Using aws.s3
+bucketlist()
+get_bucket("ddsproject1")
+
+
+####Explore case_study data###
+#F = case_study
+#F
+#str(F)
+#filter for Attrition equals yes
+case_study_byattrition <- case_study %>%
+                          filter(Attrition == 'Yes') 
+#case_study_byattrition
+names(case_study_byattrition)
+###############################
+
+str(case_study)
+```
+## See the number of Yes and No for attrition respectively in a table
+```{r}
+#see the number of Yes and No for attrition respectively 
+table(case_study$Attrition)
+```
+## See the percentage for Attrition via a pie chart
+```{r echo = FALSE}
+######Create a pie chart to show attrition percentages for Yes and No###########
+#load the scales package for percent formatting
+library(scales)
+
+#count the frequency of each unique value in the Attrition column
+freq <- table(case_study$Attrition)
+
+#create a pie chart based on the frequency counts
+pie(freq, labels = c("No Attrition", "Attrition"), 
+    main = "Attrition Status of Employees", 
+    col = c("#FBBD16", "#CC1525"), 
+    border = NA)
+
+#add percentage labels to the pie chart slices
+percent_labels <- paste0(round(100 * freq/sum(freq)), "%")
+legend("topright", legend = percent_labels, bty = "n", cex = 0.8, 
+       fill = c("#FBBD16", "#CC1525"))
+#######end of pie chart code#################################################### 
+
+#Check for missing values in the data set (no missing data here thankfully)
+#dim(case_study)
+#sum of missing data is 0, this means there is no missing data
+#sum(is.na(case_study))
+#str(case_study)
+
+
+##########explore data############
+#head(F[,1:2])
+#A = F[,1:2]
+#A
+#dim(A)
+#str(A)
+#B = F[,3]
+#B
+#str(B)
+###################################
+```
+
+## Observation 1  
+* Observe that we only have int and string data types features. 27 features are numerical and 9 features are categorical  
+* Attrition is the value we are targeting. And the quantity of data of employees having Attrition is less compared to employees which do not have Attrition. So from the pie chart, we can see that of the 870 employee 16% left their job due to some reason, but 84% of the employees are still working at the company. 
+* No missing values, so we have a complete data set which is ideal.
+```{r echo = FALSE}
+# load the required packages
+library(stats)
+library(ggplot2)
+
+#remove non numeric values so you can create a heat map for the 27 features that are numeric
+library(dplyr)
+
+# assume case_study is your data frame
+case_study_numeric <- case_study %>%
+  select_if(is.numeric)
+  str(case_study_numeric)
+  dim(case_study_numeric)
+
+library(reshape2)
+
+# create a correlation matrix for the case_study data frame
+corr_mat <- cor(case_study_numeric)
+
+# reshape correlation matrix to long format
+corr_long <- melt(corr_mat)
+
+# create heatmap
+ggplot(corr_long, aes(x= Var1, y= Var2 , fill=value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#4daf4a", mid = "white", high = "#e41a1c",
+                       midpoint = 0, limit = c(-0.8,0.8), name = "Correlation") +
+  coord_equal() +
+  theme_classic() +
+   theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7),
+        axis.text.y = element_text(size = 7)) +
+  xlab("Numerical Values") +
+  ylab("Numerical Values") +
+  ggtitle("Correlation Heatmap of case_study_numeric")
+```
+
+## Observation 2  
+* JobLevel appears to be a crucial feature and you better believe we'll be delving deeper into it with some exploratory analysis.
+* Brace yourself, because we discovered some positively correlated relationships: TotalWorkingYears has a positive relationship with both JobLevel and MonthlyIncome indicated by the dark shade of red. 
+* And that's not all folks, we also found a positive relationship between YearsAtCompany with both YearsInCurrentRole and YearsWithCurrentManager.
+
+# EDA
+## Analysis of Catergorical Features
+
+```{r echo = FALSE}
+library(ggplot2)
+library(dplyr)
+
+#str(case_study)
+
+#Count Business travel
+case_study %>% 
+  count(BusinessTravel)
+
+#Bar plot
+case_study %>%
+  group_by(BusinessTravel, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=BusinessTravel, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to BusinessTravel") +
+  theme_minimal() +
+  labs(x="Business Travel", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+
+```
+```{r echo = FALSE}
+library(ggplot2)
+library(dplyr)
+
+#str(case_study)
+
+#Count department
+case_study %>% 
+  count(Department)
+
+#Bar plot
+case_study %>%
+  group_by(Department, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=Department, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to Department") +
+  theme_minimal() +
+  labs(x="Department", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+```
+```{r echo = FALSE}
+library(ggplot2)
+library(dplyr)
+
+#str(case_study)
+
+#Count EducationField
+case_study %>% 
+  count(EducationField)
+#Bar plot
+case_study %>%
+  group_by(EducationField, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=EducationField, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to EducationField") +
+  theme_minimal() +
+  labs(x="EducationField", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+```
+```{r echo = FALSE}
+#Count Gender
+case_study %>% 
+  count(Gender)
+#Bar plot
+case_study %>%
+  group_by(Gender, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=Gender, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to Gender") +
+  theme_minimal() +
+  labs(x="Gender", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+```
+```{r echo = FALSE}
+#Count Marital status
+case_study %>% 
+  count(MaritalStatus)
+#Bar plot
+case_study %>%
+  group_by(MaritalStatus, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=MaritalStatus, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to Marital Status") +
+  theme_minimal() +
+  labs(x="MaritalStatus", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+```
+```{r echo = FALSE}
+#Count JobRole
+case_study %>% 
+  count(JobRole)
+#Bar plot
+case_study %>%
+  group_by(JobRole, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=JobRole, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to JobRole") +
+  theme_minimal() +
+  labs(x="JobRole", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3) +
+  theme(axis.text.x = element_text(angle = 50, hjust = 1))
+```
+```{r echo = FALSE}
+#Count OverTime
+case_study %>% 
+  count(OverTime)
+#Bar plot
+case_study %>%
+  group_by(OverTime, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=OverTime, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to OverTime") +
+  theme_minimal() +
+  labs(x="OverTime", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3) +
+  theme(axis.text.x = element_text(angle = 50, hjust = 1))
+
+# Load the data frame
+empdf <- case_study
+
+# Create the cross tabulation
+table(empdf$OverTime, empdf$Gender)
+
+
+```
+
+## Observation 3
+
+* There are more employees who travel very rarely, and the number of Attrition of such employees are greater. So employees who get less chance to travel may need to be given surveys to see if they want to travel to reduce attrition rate here.
+* Employees working in R&D department are the biggest population, but employees from sales department or in positions like sales executive or sale Representative leave the job early.
+* Males have a higher attrition then Females.
+* Male workers work overtime more than females.
+
+# Analysis of Numerical Features
+## Distribution of Age with a mean age vertical line
+```{r echo = FALSE}
+library(ggplot2)
+
+avg_age <- mean(case_study$Age)
+
+ggplot(case_study, aes(x = Age)) +
+  geom_density(color = "#FBBD16") +
+  geom_vline(xintercept = avg_age, linetype = "dashed", color = "#CC1525") +
+  annotate("text", x = avg_age, y = 0.015, label = paste0("Mean age = ", round(avg_age, 1))) +
+  labs(x = "Age", y = "Density") +
+  theme_minimal()
+
+```
+
+# Ordinal Features
+```{r echo = FALSE}
+#Count Number of types of education
+case_study %>% 
+  count(Education)
+
+# Create a mapping of education levels to labels
+edu_map <- c('Below College', 'College', 'Bachelor', 'Master', 'Doctor')
+
+# Use the ggplot2 library to create a countplot
+library(ggplot2)
+ggplot(case_study, aes(x=factor(Education, levels=1:5, labels=edu_map), fill=Attrition)) + 
+  geom_bar() +
+  labs(title = "Education With respect to Attrition") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  xlab("Education Level") +
+  ylab("Count")
+```
+
+## Observation 4
+* There are more Employees with Bachelor degrees than other education levels. Attrition with respect to bachelor might have more expectations from the company and we will explore the reason behind this from this dataset.
+* EnvironmentSatisfaction are ranked as high or medium. We observe from the data a small amount of employees do not like the work environment which cannot be a large cause for changing a job.
+* JobInvolvement of employees is very high indicated by 514 for 3 'High'.
+
+
+```{r echo = FALSE}
+#Count Number Environmental satisfaction
+case_study %>% 
+  count(EnvironmentSatisfaction)
+
+#Count Number of Job Invovement
+case_study %>% 
+  count(JobInvolvement)
+
+```
+```{r echo = FALSE}
+library(ggplot2)
+
+avg_monthly_income <- mean(case_study$MonthlyIncome)
+
+ggplot(case_study, aes(x = MonthlyIncome)) +
+  geom_density(color = "#FBBD16") +
+  geom_vline(xintercept = avg_monthly_income, linetype = "dashed", color = "#CC1525") +
+  annotate("text", x = avg_monthly_income, y = 0.00014, label = paste0("Mean Monthly Income = ", round(avg_monthly_income, 1))) +
+  labs(x = "Monthly Income", y = "Density") +
+  theme_minimal()
+
+```
+```{r echo = FALSE}
+
+library(ggplot2)
+
+ggplot(case_study, aes(x = "", y = MonthlyIncome)) +
+  geom_boxplot(fill = "#FBBD16", coef = 1.5) +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Box plot of Monthly Income",
+       y = "Monthly Income")
+
+
+```
+```{r echo = FALSE}
+library(ggplot2)
+
+ggplot(case_study, aes(x = Age, y = MonthlyIncome)) +
+  geom_point(color = "#CC1525") +
+  geom_smooth(method = "lm", se = FALSE, color = "#FBBD16") +
+  theme_minimal() +
+  labs(title = "Scatter plot of Monthly Income vs Age",
+       x = "Age",
+       y = "Monthly Income")
+```
+
+## Observation 5
+* There seems to be a positive linear relationship. As age and experience increases so does income. 
+
+```{r echo = FALSE}
+#Count Number of Job Level
+case_study %>% 
+  count(JobLevel)
+
+#Bar plot
+case_study %>%
+  group_by(JobLevel, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=JobLevel, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to JobLevel") +
+  theme_minimal() +
+  labs(x="Joblevel", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+
+```
+```{r echo = FALSE}
+#Count Number of Number of companies worked for
+case_study %>% 
+  count(NumCompaniesWorked)
+
+#Bar plot
+case_study %>%
+  group_by(NumCompaniesWorked, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=NumCompaniesWorked, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to NumCompaniesWorked") +
+  theme_minimal() +
+  labs(x="NumCompaniesWorked", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+
+```
+```{r echo = FALSE}
+#Count Number of Stock Option Level
+case_study %>% 
+  count(StockOptionLevel)
+
+#Bar plot
+case_study %>%
+  group_by(StockOptionLevel, Attrition) %>%
+  summarize(count = n()) %>%
+  ggplot(aes(x=StockOptionLevel, y=count, fill=Attrition)) +
+  geom_bar(stat="identity", position="stack") +
+  scale_fill_manual(values=c("#FBBD16", "#CC1525")) +
+  ggtitle("Attrition with respect to StockOptionLevel") +
+  theme_minimal() +
+  labs(x="StockOptionLevel", y="Count", fill="Attrition") +
+  geom_text(aes(label=paste0(round(count/sum(count)*100,2), "%")), 
+            position=position_stack(vjust=0.5), size=3)
+
+```
+```{r echo = FALSE}
+
+#remove non numeric values so you can create a heat map for the 27 features that are numeric
+library(dplyr)
+
+# assume case_study is your data frame
+case_study_numeric <- case_study %>%
+  select_if(is.numeric)
+
+library(reshape2)
+
+# create a correlation matrix for the case_study data frame
+corr_mat <- cor(case_study_numeric)
+
+# reshape correlation matrix to long format
+corr_long <- melt(corr_mat)
+
+# create heatmap
+ggplot(corr_long, aes(x= Var1, y= Var2 , fill=value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "#4daf4a", mid = "white", high = "#e41a1c",
+                       midpoint = 0, limit = c(-0.8,0.8), name = "Correlation") +
+  coord_equal() +
+  theme_classic() +
+   theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 7),
+        axis.text.y = element_text(size = 7)) +
+  xlab("Numerical Values") +
+  ylab("Numerical Values") +
+  ggtitle("Correlation Heatmap of case_study_numeric")
+
+```
+
+## Observations: Factors Responsible for Employee Attrition
+
+* OverTime has highest relationship with Attrition. Employee who do OverTime are more likely to change or leave the Job early. We observed this as well during categorical variable analysis.
+* Age is second highest factor, as those who are senior are retiring or the employees who have bachelors degree have more expectations from the organization and may feel burned out.
+* MonthlyIncome is third factor for employee to Attrition
+
+# Modeling
+```{r echo = FALSE}
+
+
+A  <- cbind(case_study$Age, case_study$MonthlyIncome)
+#A
+Attrition = case_study[,3]
+
+#Count Fraud and not Fraud labels
+#140 Attrition and 730 not fraud, so 140/870 is about 16.09%
+case_study %>% 
+  count(Attrition)
+
+
+classifications = knn(A,A,Attrition, prob = TRUE, k = 3)
+
+table(classifications,Attrition)
+CM = confusionMatrix(table(classifications,Attrition))
+CM
+
+dim(case_study)
+
+OnlyNA = case_study%>% filter(Attrition == "No")
+dim(OnlyNA)
+OnlyNAUnder = OnlyNA[sample(seq(1,730,1),140),]
+#OnlyNAUnder
+dim(OnlyNAUnder)
+
+#Create a data set with on attrition yes from 140 observations
+OnlyA = case_study %>% filter(Attrition == "Yes")
+#OnlyA
+dim(OnlyA)
+
+UnderSamp1 = rbind(case_study %>% filter( Attrition == "Yes"), OnlyNAUnder)
+#UnderSamp1
+dim(UnderSamp1)
+
+B <- cbind(UnderSamp1$Age, UnderSamp1$MonthlyIncome)
+#dim(B)
+#length(UnderSamp1[,3])
+
+
+classifications = knn(B[,1:2],B[,1:2],UnderSamp1[,3], prob = TRUE, k = 3)
+
+#Undersampling
+table(classifications,UnderSamp1[,3])
+CM = confusionMatrix(table(classifications,UnderSamp1[,3]))
+CM
+
+OnlyAOver = rbind(OnlyA,OnlyA[sample(seq(1,140,1),(730-140),replace = TRUE),])
+dim(OnlyAOver)
+
+OverSamp1 = rbind(case_study %>% filter(Attrition == "No"), OnlyAOver)
+dim(OverSamp1)
+
+G <- cbind(OverSamp1$Age, OverSamp1$MonthlyIncome)
+
+classifications = knn(G[,1:2],G[,1:2],OverSamp1[,3], prob = TRUE, k = 3)
+
+#Oversampling
+table(classifications,OverSamp1[,3])
+CM = confusionMatrix(table(classifications,OverSamp1[,3]))
+CM
+
+```
+
+## Observation from KNN prediction model for attribute Age and Monthly Income as Predictor for Attrition
+* With the model for Oversampling when k = 3 we have a model that predicts Attrition around 86% with Sensitivity of around 72% and Specificity of around 99%.
+
+```{r echo = FALSE}
+
+```
+
