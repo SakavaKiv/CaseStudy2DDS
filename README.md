@@ -1,5 +1,6 @@
 # CaseStudy2DDS
 
+Click on the link below to view a youtube video of this presentation!
 https://youtu.be/_tR1P1Qsw34
 
 Good Evening,
